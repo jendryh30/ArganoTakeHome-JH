@@ -1,0 +1,6 @@
+db.sqlite
+*.log
+.DS_Store
+.idea/
+.vscode/
+.review/
