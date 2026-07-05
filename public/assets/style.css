@@ -396,3 +396,39 @@ table.data td.id {
 	margin: 0;
 	font-size: 0.95rem;
 }
+
+.field-hint {
+	color: var(--text-muted);
+	font-size: 0.82rem;
+	margin: 0.35rem 0 0;
+}
+
+.field-hint-error {
+	color: var(--error-text);
+	font-weight: 600;
+}
+
+.form-field input.input-invalid {
+	border-color: var(--error-border);
+	background: var(--error-bg);
+	box-shadow: 0 0 0 3px rgba(242, 161, 132, 0.45);
+}
+
+.status-badge {
+	display: inline-block;
+	padding: 0.2rem 0.55rem;
+	border-radius: 999px;
+	font-size: 0.75rem;
+	font-weight: 650;
+	white-space: nowrap;
+}
+
+.status-live {
+	background: var(--success-bg);
+	color: var(--success-text);
+}
+
+.status-scheduled {
+	background: var(--warn-bg);
+	color: var(--warn-text);
+}

@@ -28,6 +28,17 @@ if (!$doc) {
 }
 
 render_header($doc['title']);
+
+if (!doc_is_available($doc)) {
+    ?>
+    <div class="centered-message">
+        <h1>Not available yet</h1>
+        <p>&ldquo;<?= h($doc['title']) ?>&rdquo; becomes available on <?= h($doc['available_at']) ?>.</p>
+    </div>
+    <?php
+    render_footer();
+    exit;
+}
 ?>
 
 <h1 class="page-title"><?= h($doc['title']) ?></h1>

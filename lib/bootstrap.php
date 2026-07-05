@@ -66,6 +66,51 @@ function random_token(int $bytes = 16): string {
     return bin2hex(random_bytes($bytes));
 }
 
+/** True if a document has no schedule, or its schedule has already passed. */
+function doc_is_available(array $doc, ?string $now = null): bool {
+    $now ??= date('Y-m-d H:i:s');
+    return empty($doc['available_at']) || $doc['available_at'] <= $now;
+}
+
+/** @return array{label: string, class: string} Presentation info for the admin documents table. */
+function doc_status(array $doc, ?string $now = null): array {
+    if (doc_is_available($doc, $now)) {
+        return ['label' => 'Available', 'class' => 'status-live'];
+    }
+    return [
+        'label' => 'Not available yet · ' . $doc['available_at'],
+        'class' => 'status-scheduled',
+    ];
+}
+
+/**
+ * Parses and validates the "available from" form field. Blank input is
+ * valid (means "available immediately"). Anything that doesn't parse, or
+ * that parses to a moment at-or-before now, is rejected — schedules must be
+ * strictly in the future.
+ *
+ * @return array{value: ?string, error: ?string}
+ */
+function parse_available_at(string $raw, ?string $now = null): array {
+    $raw = trim($raw);
+    if ($raw === '') {
+        return ['value' => null, 'error' => null];
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) {
+        return ['value' => null, 'error' => 'That availability date/time could not be understood.'];
+    }
+
+    $value = date('Y-m-d H:i:s', $ts);
+    $now ??= date('Y-m-d H:i:s');
+    if ($value <= $now) {
+        return ['value' => null, 'error' => 'Availability date/time must be in the future.'];
+    }
+
+    return ['value' => $value, 'error' => null];
+}
+
 /** HTML-escape helper for templates. */
 function h(string $s): string {
     return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
