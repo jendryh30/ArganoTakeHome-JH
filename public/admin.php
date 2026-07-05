@@ -42,12 +42,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$docs = db()->query('
+// --- Search + sort --------------------------------------------------------
+
+$q    = trim((string) ($_GET['q'] ?? ''));
+$sort = doc_sort_column((string) ($_GET['sort'] ?? 'created'));
+$dir  = doc_sort_direction((string) ($_GET['dir'] ?? 'desc'));
+
+$sql = '
     SELECT d.*, s.name AS creator_name
     FROM documents d
     JOIN staff s ON s.id = d.created_by
-    ORDER BY d.created_at DESC
-')->fetchAll();
+';
+$params = [];
+if ($q !== '') {
+    // Matches by row ID, title, creator name, or created date — all as a
+    // plain substring, so e.g. "2" matches doc #2 or any 2026 date, and
+    // "avery" matches the creator regardless of case.
+    //
+    // The date match is deliberately scoped to just the YYYY-MM-DD portion
+    // (SUBSTR(..., 1, 10)), not the full "YYYY-MM-DD HH:MM:SS" timestamp.
+    // Matching against the full string meant a short numeric query like "1"
+    // would very likely hit *some* digit in almost every row's time-of-day
+    // (hours/minutes/seconds), making search look broken — everything
+    // "matched" regardless of the actual date. Restricting to the date
+    // portion is also just more correct: the requirement is searching by
+    // created *date*, not by the time it happened to be created.
+    $sql .= '
+        WHERE CAST(d.id AS TEXT) LIKE :q
+           OR d.title LIKE :q
+           OR s.name LIKE :q
+           OR SUBSTR(d.created_at, 1, 10) LIKE :q
+    ';
+    $params[':q'] = '%' . $q . '%';
+}
+$sql .= ' ORDER BY ' . DOC_SORT_COLUMNS[$sort] . ' ' . strtoupper($dir);
+
+$stmt = db()->prepare($sql);
+$stmt->execute($params);
+$docs = $stmt->fetchAll();
 
 $now = date('Y-m-d H:i:s');
 
@@ -141,24 +173,52 @@ render_header('Admin', $staff);
 
 <section class="card">
     <h2 class="card-title">Documents</h2>
+
+    <form method="get" class="search-bar" id="search-form">
+        <input type="hidden" name="sort" value="<?= h($sort) ?>">
+        <input type="hidden" name="dir" value="<?= h($dir) ?>">
+        <input
+            type="text"
+            name="q"
+            value="<?= h($q) ?>"
+            placeholder="Search by ID, title, creator, or date"
+            class="search-input"
+            id="search-input"
+            autocomplete="off"
+        >
+        <button type="submit" class="btn-link">Search</button>
+        <?php if ($q !== ''): ?>
+            <a href="/admin.php" class="back-link">Clear</a>
+        <?php endif ?>
+    </form>
+
     <?php if ($docs === []): ?>
-        <p class="empty">No documents yet.</p>
+        <p class="empty" id="empty-state"><?= $q !== '' ? 'No documents match your search.' : 'No documents yet.' ?></p>
     <?php else: ?>
-        <table class="data">
+        <table class="data" id="documents-table">
             <thead>
                 <tr>
-                    <th>ID</th>
-                    <th>Title</th>
-                    <th>Creator</th>
-                    <th>Created</th>
-                    <th>Status</th>
+                    <th><?= doc_sort_link('id', 'ID', $sort, $dir, $q) ?></th>
+                    <th><?= doc_sort_link('title', 'Title', $sort, $dir, $q) ?></th>
+                    <th><?= doc_sort_link('creator', 'Creator', $sort, $dir, $q) ?></th>
+                    <th><?= doc_sort_link('created', 'Created', $sort, $dir, $q) ?></th>
+                    <th><?= doc_sort_link('status', 'Status', $sort, $dir, $q) ?></th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($docs as $d): ?>
                     <?php $status = doc_status($d, $now); ?>
-                    <tr>
+                    <?php
+                        // Same fields the server search matches on (id, title,
+                        // creator, date-only), lowercased once here so the
+                        // live client-side filter below can just do a plain
+                        // substring check with no per-keystroke DOM parsing.
+                        $searchBlob = strtolower(
+                            $d['id'] . ' ' . $d['title'] . ' ' . $d['creator_name'] . ' ' . substr($d['created_at'], 0, 10)
+                        );
+                    ?>
+                    <tr data-search="<?= h($searchBlob) ?>">
                         <td class="id">#<?= (int) $d['id'] ?></td>
                         <td><?= h($d['title']) ?></td>
                         <td><?= h($d['creator_name']) ?></td>
@@ -173,7 +233,38 @@ render_header('Admin', $staff);
                 <?php endforeach ?>
             </tbody>
         </table>
+        <p class="empty" id="live-empty-state" hidden>No documents match your search.</p>
     <?php endif ?>
 </section>
+
+<script>
+(function () {
+    var input = document.getElementById('search-input');
+    var table = document.getElementById('documents-table');
+    if (!input || !table) return; // nothing to filter (zero documents server-side)
+
+    var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
+    var liveEmptyState = document.getElementById('live-empty-state');
+
+    function applyFilter() {
+        var term = input.value.trim().toLowerCase();
+        var visibleCount = 0;
+
+        rows.forEach(function (row) {
+            var matches = term === '' || (row.dataset.search || '').indexOf(term) !== -1;
+            row.hidden = !matches;
+            if (matches) visibleCount++;
+        });
+
+        table.hidden = visibleCount === 0;
+        if (liveEmptyState) liveEmptyState.hidden = visibleCount !== 0;
+    }
+
+    // Filter instantly as you type — no need to click Search or reload.
+    // Submitting the form still works too (useful for a shareable/bookmarkable
+    // URL, or if JS is unavailable), it just re-runs the same search server-side.
+    input.addEventListener('input', applyFilter);
+})();
+</script>
 
 <?php render_footer(); ?>

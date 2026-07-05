@@ -111,6 +111,47 @@ function parse_available_at(string $raw, ?string $now = null): array {
     return ['value' => $value, 'error' => null];
 }
 
+/**
+ * Whitelisted sortable columns for the admin documents table. Keys are the
+ * `sort=` query values; values are the actual ORDER BY expression.
+ *
+ * `status` sorts by `d.available_at` directly rather than the rendered
+ * label: NULL (available immediately) sorts before any future timestamp in
+ * SQLite's default ASC ordering, so ascending groups "Available" documents
+ * first, then upcoming schedules soonest-first; descending reverses that.
+ * There's no third state to break ties on, so this is just the natural
+ * ordering of the one column status is actually derived from.
+ */
+const DOC_SORT_COLUMNS = [
+    'id'      => 'd.id',
+    'title'   => 'd.title COLLATE NOCASE',
+    'creator' => 's.name COLLATE NOCASE',
+    'created' => 'd.created_at',
+    'status'  => 'd.available_at',
+];
+
+/** Normalizes a requested sort column against the whitelist, defaulting to 'created'. */
+function doc_sort_column(string $requested): string {
+    return array_key_exists($requested, DOC_SORT_COLUMNS) ? $requested : 'created';
+}
+
+/** Normalizes a requested sort direction, defaulting to 'desc'. */
+function doc_sort_direction(string $requested): string {
+    return strtolower($requested) === 'asc' ? 'asc' : 'desc';
+}
+
+/**
+ * Builds an <a> tag for a sortable column header: clicking it sorts by that
+ * column, flipping direction if it's already the active sort, and always
+ * preserving the current search term.
+ */
+function doc_sort_link(string $column, string $label, string $activeSort, string $activeDir, string $q): string {
+    $nextDir = ($activeSort === $column && $activeDir === 'asc') ? 'desc' : 'asc';
+    $arrow   = $activeSort === $column ? ($activeDir === 'asc' ? ' ↑' : ' ↓') : '';
+    $url     = '/admin.php?' . http_build_query(['q' => $q, 'sort' => $column, 'dir' => $nextDir]);
+    return '<a href="' . h($url) . '" class="sort-link">' . h($label) . $arrow . '</a>';
+}
+
 /** HTML-escape helper for templates. */
 function h(string $s): string {
     return htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
