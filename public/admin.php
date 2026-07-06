@@ -9,7 +9,16 @@ $error = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $title           = trim((string) ($_POST['title'] ?? ''));
     $body            = trim((string) ($_POST['body']  ?? ''));
-    $availableAtRaw  = trim((string) ($_POST['available_at'] ?? ''));
+
+    // available_at_utc is populated by JS from the datetime-local picker,
+    // converted to a UTC ISO string using the browser's own timezone — this
+    // is what makes scheduling correct for staff anywhere, not just whoever
+    // the server happens to assume. available_at (raw, no timezone) is only
+    // a fallback for the rare case JS didn't run; see the form's <script>.
+    $availableAtUtc = trim((string) ($_POST['available_at_utc'] ?? ''));
+    $availableAtRaw = $availableAtUtc !== ''
+        ? $availableAtUtc
+        : trim((string) ($_POST['available_at'] ?? ''));
 
     $parsedAvailableAt = parse_available_at($availableAtRaw);
     $availableAt       = $parsedAvailableAt['value'];
@@ -19,26 +28,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($title === '' || $body === '') {
         $error = 'Title and body are both required.';
+    } elseif ($error === null && title_is_taken($title)) {
+        $error = 'A document with this title already exists — titles must be unique.';
     } elseif ($error === null) {
-        $stmt = db()->prepare('
-            INSERT INTO documents (title, body, created_by, available_at)
-            VALUES (:title, :body, :created_by, :available_at)
-        ');
-        $stmt->execute([
-            ':title'        => $title,
-            ':body'         => $body,
-            ':created_by'   => $staff['id'],
-            ':available_at' => $availableAt,
-        ]);
-        $docId = (int) db()->lastInsertId();
+        try {
+            $stmt = db()->prepare('
+                INSERT INTO documents (title, body, created_by, available_at)
+                VALUES (:title, :body, :created_by, :available_at)
+            ');
+            $stmt->execute([
+                ':title'        => $title,
+                ':body'         => $body,
+                ':created_by'   => $staff['id'],
+                ':available_at' => $availableAt,
+            ]);
+            $docId = (int) db()->lastInsertId();
 
-        audit_log('create', 'document', $docId, [
-            'title'        => $title,
-            'available_at' => $availableAt,
-        ]);
+            audit_log('create', 'document', $docId, [
+                'title'        => $title,
+                'available_at' => $availableAt,
+            ]);
 
-        header('Location: /admin.php?created=' . $docId);
-        exit;
+            header('Location: /admin.php?created=' . $docId);
+            exit;
+        } catch (PDOException $e) {
+            // Backstop for the rare race: two submissions for the same title
+            // land here at nearly the same moment and both pass the
+            // title_is_taken() check above before either commits. The UNIQUE
+            // index (see migrations/20260710_unique_document_titles.sql)
+            // catches it here instead of surfacing a raw SQL error.
+            if (str_contains($e->getMessage(), 'UNIQUE constraint failed')) {
+                $error = 'A document with this title already exists — titles must be unique.';
+            } else {
+                throw $e;
+            }
+        }
     }
 }
 
@@ -53,6 +77,12 @@ $sort = doc_sort_column((string) ($_GET['sort'] ?? 'created'));
 $dir  = doc_sort_direction((string) ($_GET['dir'] ?? 'desc'));
 
 $docs = fetch_admin_documents($q, $sort, $dir);
+
+// All titles regardless of the current search filter/sort, lowercased once
+// here — used only for the live "this title is taken" warning below. The
+// actual enforcement is server-side (title_is_taken() + the UNIQUE index);
+// this is a UX nicety only, same as the scheduling field's live warning.
+$allTitlesLower = array_map('mb_strtolower', db()->query('SELECT title FROM documents')->fetchAll(PDO::FETCH_COLUMN));
 
 $now = date('Y-m-d H:i:s');
 
@@ -74,10 +104,11 @@ render_header('Admin', $staff, 'container container-wide');
 
 <section class="card">
     <h2 class="card-title">New document</h2>
-    <form method="post">
+    <form method="post" id="new-document-form">
         <div class="form-field">
             <label for="title">Title</label>
             <input type="text" id="title" name="title" required>
+            <p class="field-hint field-hint-error" id="title_warning" hidden>A document with this title already exists — titles must be unique.</p>
         </div>
         <div class="form-field">
             <label for="body">Body</label>
@@ -86,6 +117,7 @@ render_header('Admin', $staff, 'container container-wide');
         <div class="form-field">
             <label for="available_at">Available from (optional)</label>
             <input type="datetime-local" id="available_at" name="available_at" min="<?= h(date('Y-m-d\TH:i')) ?>">
+            <input type="hidden" id="available_at_utc" name="available_at_utc">
             <p class="field-hint">Leave blank to make it visible to recipients immediately. Must be in the future.</p>
             <p class="field-hint field-hint-error" id="available_at_warning" hidden>That time has already passed — pick a later one.</p>
         </div>
@@ -95,9 +127,26 @@ render_header('Admin', $staff, 'container container-wide');
 
 <script>
 (function () {
+    var form = document.getElementById('new-document-form');
     var input = document.getElementById('available_at');
+    var utcInput = document.getElementById('available_at_utc');
     var warning = document.getElementById('available_at_warning');
     if (!input) return;
+
+    // Converts the picker's local wall-clock value to a UTC ISO string using
+    // the browser's own timezone, so scheduling is correct no matter where
+    // the staff member creating the document actually is. Sent alongside the
+    // raw field as available_at_utc; the server prefers it when present.
+    if (form) {
+        form.addEventListener('submit', function () {
+            if (input.value === '') {
+                utcInput.value = '';
+                return;
+            }
+            var d = new Date(input.value);
+            utcInput.value = isNaN(d.getTime()) ? '' : d.toISOString();
+        });
+    }
 
     function nowLocalValue() {
         var d = new Date();
@@ -141,6 +190,32 @@ render_header('Admin', $staff, 'container container-wide');
     input.addEventListener('input', updateWarning);
     input.addEventListener('change', clampToNow);
     input.addEventListener('blur', clampToNow);
+})();
+</script>
+
+<script>
+(function () {
+    // UX nicety only, mirroring the scheduling field's live warning above —
+    // title_is_taken() on the server is the actual enforcement (backed by a
+    // UNIQUE index) and runs regardless of what this catches.
+    var existingTitlesLower = <?= json_encode($allTitlesLower, JSON_UNESCAPED_SLASHES) ?>;
+    var input = document.getElementById('title');
+    var warning = document.getElementById('title_warning');
+    if (!input) return;
+
+    function isTaken() {
+        var value = input.value.trim().toLowerCase();
+        return value !== '' && existingTitlesLower.indexOf(value) !== -1;
+    }
+
+    function updateWarning() {
+        var taken = isTaken();
+        input.classList.toggle('input-invalid', taken);
+        if (warning) warning.hidden = !taken;
+    }
+
+    input.addEventListener('input', updateWarning);
+    input.addEventListener('blur', updateWarning);
 })();
 </script>
 
@@ -194,12 +269,28 @@ render_header('Admin', $staff, 'container container-wide');
                         <td class="id">#<?= (int) $d['id'] ?></td>
                         <td class="title-cell"><?= h($d['title']) ?></td>
                         <td><?= h($d['creator_name']) ?></td>
-                        <td class="date-cell"><?= h($d['created_at']) ?></td>
-                        <td class="status-cell"><span class="status-badge <?= h($status['class']) ?>"><?= h($status['label']) ?></span></td>
+                        <td class="date-cell">
+                            <span class="local-time" data-utc="<?= h(iso_utc($d['created_at'])) ?>"><?= h(format_display_datetime($d['created_at'])) ?></span>
+                        </td>
+                        <td class="status-cell">
+                            <span class="status-badge <?= h($status['class']) ?>">
+                                <?php if ($status['class'] === 'status-scheduled'): ?>
+                                    Not available yet · <span class="local-time" data-utc="<?= h($status['available_at_utc']) ?>"><?= h(format_display_datetime($d['available_at'])) ?></span>
+                                <?php else: ?>
+                                    <?= h($status['label']) ?>
+                                <?php endif ?>
+                            </span>
+                        </td>
                         <td class="row-actions">
-                            <a href="/share.php?doc=<?= (int) $d['id'] ?>" class="btn-link">
-                                Create share →
-                            </a>
+                            <?php if ($status['class'] === 'status-scheduled'): ?>
+                                <span class="btn-link-disabled" title="Available once the document goes live">
+                                    Create share →
+                                </span>
+                            <?php else: ?>
+                                <a href="/share.php?doc=<?= (int) $d['id'] ?>" class="btn-link">
+                                    Create share →
+                                </a>
+                            <?php endif ?>
                         </td>
                     </tr>
                 <?php endforeach ?>

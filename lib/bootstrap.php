@@ -2,7 +2,16 @@
 
 declare(strict_types=1);
 
-date_default_timezone_set('America/Chicago');
+// Everything is stored and computed in UTC, matching SQLite's `datetime('now')`
+// column default. The scheduling form's <input type="datetime-local"> has no
+// timezone of its own — it's just whatever wall-clock the picker shows — so
+// converting it correctly for a staff member in any timezone can't happen
+// here on the server; it happens in the browser (see admin.php's JS), which
+// knows the user's real local offset and converts to a UTC ISO string before
+// submitting. Display works the same way in reverse: pages render the raw
+// UTC value in a `data-utc` attribute, and a small shared script (see
+// lib/layout.php) reformats it into each viewer's own local time on load.
+date_default_timezone_set('UTC');
 
 const DB_PATH = __DIR__ . '/../db.sqlite';
 
@@ -87,11 +96,6 @@ function audit_log_anonymous(
     ]);
 }
 
-/** Cryptographically-random hex token, defaults to 32 chars (16 bytes). */
-function random_token(int $bytes = 16): string {
-    return bin2hex(random_bytes($bytes));
-}
-
 /**
  * Cryptographically-random 6-digit numeric access code, zero-padded (e.g.
  * "004821"). Meant to be handed to a recipient through a channel separate
@@ -100,6 +104,27 @@ function random_token(int $bytes = 16): string {
  */
 function random_access_code(): string {
     return sprintf('%06d', random_int(0, 999999));
+}
+
+/**
+ * A share link identifier: 6 random digits, same shape as random_access_code()
+ * but a distinct value — short enough to read aloud or type by hand, unlike
+ * the 32-character hex token this replaced. shares.token still has a UNIQUE
+ * constraint (see schema.sql), which is the real guarantee; a 6-digit space
+ * (1,000,000 values) collides far more often than the old 128-bit token
+ * ever would, so this checks for a free one before handing it back rather
+ * than assuming one always is.
+ */
+function random_share_token(): string {
+    for ($attempt = 0; $attempt < 20; $attempt++) {
+        $candidate = random_access_code();
+        $stmt = db()->prepare('SELECT 1 FROM shares WHERE token = :token LIMIT 1');
+        $stmt->execute([':token' => $candidate]);
+        if ($stmt->fetchColumn() === false) {
+            return $candidate;
+        }
+    }
+    throw new RuntimeException('Could not generate a unique share token after 20 attempts.');
 }
 
 /**
@@ -122,15 +147,57 @@ function doc_is_available(array $doc, ?string $now = null): bool {
     return empty($doc['available_at']) || $doc['available_at'] <= $now;
 }
 
-/** @return array{label: string, class: string} Presentation info for the admin documents table. */
+/**
+ * @return array{label: string, class: string, available_at_utc: ?string}
+ *   Presentation info for the admin documents table. `label` is a
+ *   server-rendered fallback (UTC, MM/DD/YYYY HH:MM) for no-JS clients;
+ *   `available_at_utc` lets templates additionally render a `data-utc` span
+ *   that JS upgrades to the viewer's own local time (see lib/layout.php).
+ */
 function doc_status(array $doc, ?string $now = null): array {
     if (doc_is_available($doc, $now)) {
-        return ['label' => 'Available', 'class' => 'status-live'];
+        return ['label' => 'Available', 'class' => 'status-live', 'available_at_utc' => null];
     }
     return [
-        'label' => 'Not available yet · ' . $doc['available_at'],
-        'class' => 'status-scheduled',
+        'label'            => 'Not available yet · ' . format_display_datetime($doc['available_at']),
+        'class'            => 'status-scheduled',
+        'available_at_utc' => iso_utc($doc['available_at']),
     ];
+}
+
+/**
+ * Reformats a stored `Y-m-d H:i:s` timestamp (assumed UTC, since that's the
+ * process timezone) for display as `m/d/Y H:i` (e.g. "07/06/2026 05:00").
+ * Storage format is untouched — search and sort still operate on the raw
+ * column. This is the no-JS fallback; see iso_utc() for the JS-upgradeable
+ * version used to show each viewer's own local time instead.
+ */
+function format_display_datetime(?string $value): string {
+    if ($value === null || $value === '') {
+        return '';
+    }
+    $ts = strtotime($value);
+    if ($ts === false) {
+        return $value;
+    }
+    return date('m/d/Y H:i', $ts);
+}
+
+/**
+ * Converts a stored `Y-m-d H:i:s` UTC timestamp into an unambiguous ISO 8601
+ * UTC string (e.g. "2026-07-06T05:00:00Z") suitable for a `data-utc`
+ * attribute. JavaScript's `new Date(...)` parses this correctly regardless
+ * of the viewer's own timezone, which is what makes local-time display work.
+ */
+function iso_utc(?string $value): ?string {
+    if ($value === null || $value === '') {
+        return null;
+    }
+    $ts = strtotime($value . ' UTC');
+    if ($ts === false) {
+        return null;
+    }
+    return gmdate('Y-m-d\TH:i:s\Z', $ts);
 }
 
 /**
@@ -159,6 +226,19 @@ function parse_available_at(string $raw, ?string $now = null): array {
     }
 
     return ['value' => $value, 'error' => null];
+}
+
+/**
+ * True if a document with this title (case-insensitively) already exists.
+ * Backed by a UNIQUE index (see migrations/20260710_unique_document_titles.sql)
+ * that's the actual guarantee; this is what lets admin.php give a friendly
+ * error before even attempting the insert, the same way parse_available_at()
+ * catches a bad schedule before it reaches the database.
+ */
+function title_is_taken(string $title): bool {
+    $stmt = db()->prepare('SELECT 1 FROM documents WHERE title = :title COLLATE NOCASE LIMIT 1');
+    $stmt->execute([':title' => $title]);
+    return $stmt->fetchColumn() !== false;
 }
 
 /**

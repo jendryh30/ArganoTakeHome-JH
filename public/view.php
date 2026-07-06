@@ -50,7 +50,6 @@ if (!$verified) {
     ?>
     <div class="centered-message">
         <h1><?= h($doc['title']) ?></h1>
-        <p class="meta">Shared with <?= h($doc['recipient_email']) ?></p>
         <p>Enter the 6-digit access code you were given to view this document.</p>
         <?php if ($codeError !== null): ?>
             <div class="banner banner-error"><?= h($codeError) ?></div>
@@ -82,7 +81,10 @@ if (!doc_is_available($doc)) {
     ?>
     <div class="centered-message">
         <h1>Not available yet</h1>
-        <p>&ldquo;<?= h($doc['title']) ?>&rdquo; becomes available on <?= h($doc['available_at']) ?>.</p>
+        <p>
+        &ldquo;<?= h($doc['title']) ?>&rdquo; becomes available on
+        <span class="local-time" data-utc="<?= h(iso_utc($doc['available_at'])) ?>"><?= h(format_display_datetime($doc['available_at'])) ?></span>.
+    </p>
     </div>
     <?php
     render_footer();

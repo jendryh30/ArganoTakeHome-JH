@@ -128,6 +128,34 @@ test('doc_status labels match availability', function () {
     assert_true($scheduled['class'] === 'status-scheduled', 'expected the scheduled status class');
 });
 
+// --- Feature: unique document titles -------------------------------------
+
+test('title_is_taken is true for an exact existing title', function () {
+    assert_true(title_is_taken('Q1 Kickoff Brief'), 'expected the seeded title to be reported as taken');
+});
+
+test('title_is_taken is case-insensitive', function () {
+    assert_true(title_is_taken('q1 kickoff brief'), 'expected a case-insensitive match');
+    assert_true(title_is_taken('Q1 KICKOFF BRIEF'), 'expected a case-insensitive match');
+});
+
+test('title_is_taken is false for a title that does not exist', function () {
+    assert_true(!title_is_taken('Definitely Not A Real Title Yet'), 'expected an unused title to be reported as free');
+});
+
+test('the UNIQUE index rejects a duplicate title even bypassing the app-level check', function () {
+    $doc = db()->query("SELECT created_by FROM documents WHERE title = 'Q1 Kickoff Brief'")->fetch();
+
+    $threw = false;
+    try {
+        $stmt = db()->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, ?)');
+        $stmt->execute(['Q1 Kickoff Brief', 'duplicate attempt', $doc['created_by']]);
+    } catch (PDOException $e) {
+        $threw = str_contains($e->getMessage(), 'UNIQUE constraint failed');
+    }
+    assert_true($threw, 'expected inserting a duplicate title to violate the UNIQUE index');
+});
+
 // --- Feature: document search + sort -------------------------------------
 
 test('search matches a document by title substring, case-insensitively', function () {
@@ -297,6 +325,51 @@ test('doc_sort_link preserves the current search term across sort clicks', funct
     assert_true(str_contains($link, 'q=kickoff'), 'the search term should be preserved in the sort link URL');
 });
 
+// --- Fix: created_at/available_at timezone mismatch + display format ----
+
+test('format_display_datetime renders MM/DD/YYYY HH:MM', function () {
+    assert_true(
+        format_display_datetime('2026-07-06 05:00:00') === '07/06/2026 05:00',
+        'unexpected format: ' . format_display_datetime('2026-07-06 05:00:00')
+    );
+});
+
+test('format_display_datetime returns an empty string for null/blank input', function () {
+    assert_true(format_display_datetime(null) === '');
+    assert_true(format_display_datetime('') === '');
+});
+
+test('doc_status uses the MM/DD/YYYY HH:MM display format in its label', function () {
+    $scheduled = doc_status(['available_at' => '2099-03-05 14:30:00']);
+    assert_true(
+        $scheduled['label'] === 'Not available yet · 03/05/2099 14:30',
+        'unexpected label: ' . $scheduled['label']
+    );
+});
+
+test('iso_utc renders an unambiguous UTC ISO string from a stored timestamp', function () {
+    assert_true(
+        iso_utc('2026-07-06 05:00:00') === '2026-07-06T05:00:00Z',
+        'unexpected value: ' . iso_utc('2026-07-06 05:00:00')
+    );
+});
+
+test('iso_utc returns null for null/blank input', function () {
+    assert_true(iso_utc(null) === null);
+    assert_true(iso_utc('') === null);
+});
+
+test('doc_status exposes available_at_utc for JS-based local-time display, null when available now', function () {
+    $available = doc_status(['available_at' => null]);
+    assert_true($available['available_at_utc'] === null, 'an available-now doc should not need a UTC value');
+
+    $scheduled = doc_status(['available_at' => '2099-03-05 14:30:00']);
+    assert_true(
+        $scheduled['available_at_utc'] === '2099-03-05T14:30:00Z',
+        'unexpected value: ' . var_export($scheduled['available_at_utc'], true)
+    );
+});
+
 // --- Feature: share access code -----------------------------------------
 
 test('random_access_code always produces a zero-padded 6-digit string', function () {
@@ -338,10 +411,47 @@ test('every seeded share has a 6-digit access_code stored', function () {
     }
 });
 
+test('random_share_token always produces a zero-padded 6-digit string', function () {
+    for ($i = 0; $i < 50; $i++) {
+        $token = random_share_token();
+        assert_true(
+            preg_match('/^\d{6}$/', $token) === 1,
+            "expected a 6-digit numeric string, got: {$token}"
+        );
+    }
+});
+
+test('random_share_token never returns a value already in use', function () {
+    $doc = db()->query("SELECT id FROM documents WHERE title = 'Q1 Kickoff Brief'")->fetch();
+    $taken = random_share_token();
+    $stmt = db()->prepare('INSERT INTO shares (document_id, token, recipient_email, access_code) VALUES (?, ?, ?, ?)');
+    $stmt->execute([$doc['id'], $taken, 'collision-check@example.com', random_access_code()]);
+    $shareId = (int) db()->lastInsertId();
+
+    try {
+        for ($i = 0; $i < 20; $i++) {
+            assert_true(random_share_token() !== $taken, 'a freshly generated token collided with one already in the database');
+        }
+    } finally {
+        db()->prepare('DELETE FROM shares WHERE id = ?')->execute([$shareId]);
+    }
+});
+
+test('every seeded share has a 6-digit token, not the old hex format', function () {
+    $tokens = db()->query('SELECT token FROM shares')->fetchAll(PDO::FETCH_COLUMN);
+    assert_true(count($tokens) >= 3, 'expected at least three seeded shares');
+    foreach ($tokens as $token) {
+        assert_true(
+            preg_match('/^\d{6}$/', (string) $token) === 1,
+            'expected every seeded share token to be 6 digits, got: ' . var_export($token, true)
+        );
+    }
+});
+
 test('creating a share stores a working access code alongside the token', function () {
     $doc = db()->query("SELECT id FROM documents WHERE title = 'Q1 Kickoff Brief'")->fetch();
 
-    $token = random_token();
+    $token = random_share_token();
     $code  = random_access_code();
     $stmt = db()->prepare('
         INSERT INTO shares (document_id, token, recipient_email, access_code)

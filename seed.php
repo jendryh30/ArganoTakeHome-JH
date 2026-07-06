@@ -29,7 +29,7 @@ $stmt->execute([
 ]);
 $liveDocId = (int) $pdo->lastInsertId();
 
-$token = random_token();
+$token = random_share_token();
 $code  = random_access_code();
 $stmt = $pdo->prepare('
     INSERT INTO shares (document_id, token, recipient_email, access_code)
@@ -51,7 +51,7 @@ $stmt->execute([
 ]);
 $scheduledDocId = (int) $pdo->lastInsertId();
 
-$scheduledToken = random_token();
+$scheduledToken = random_share_token();
 $scheduledCode  = random_access_code();
 $stmt = $pdo->prepare('
     INSERT INTO shares (document_id, token, recipient_email, access_code)
@@ -71,7 +71,7 @@ $stmt->execute([
 ]);
 $thirdDocId = (int) $pdo->lastInsertId();
 
-$thirdToken = random_token();
+$thirdToken = random_share_token();
 $thirdCode  = random_access_code();
 $stmt = $pdo->prepare('
     INSERT INTO shares (document_id, token, recipient_email, access_code)

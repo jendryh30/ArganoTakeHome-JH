@@ -21,6 +21,25 @@ if (!$doc) {
     exit;
 }
 
+// Sharing is gated the same as viewing: a document that isn't live yet can't
+// have a share link created for it either, so availability and shareability
+// always match. Enforced here (not just by greying out the link in
+// admin.php) so hitting this URL directly can't bypass it.
+if (!doc_is_available($doc)) {
+    http_response_code(403);
+    render_header('Not available yet', $staff);
+    ?>
+    <a href="/admin.php" class="back-link">← back to admin</a>
+    <div class="banner banner-error">
+        &ldquo;<?= h($doc['title']) ?>&rdquo; isn't available yet — it's scheduled for
+        <span class="local-time" data-utc="<?= h(iso_utc($doc['available_at'])) ?>"><?= h(format_display_datetime($doc['available_at'])) ?></span>.
+        Share links can be created once it goes live.
+    </div>
+    <?php
+    render_footer();
+    exit;
+}
+
 $error        = null;
 $created_token = null;
 $created_code  = null;
@@ -31,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($email === '') {
         $error = 'Recipient email is required.';
     } else {
-        $token = random_token();
+        $token = random_share_token();
         $code  = random_access_code();
         $stmt = db()->prepare('
             INSERT INTO shares (document_id, token, recipient_email, access_code)
