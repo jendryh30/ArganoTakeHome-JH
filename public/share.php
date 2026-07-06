@@ -21,8 +21,9 @@ if (!$doc) {
     exit;
 }
 
-$error         = null;
+$error        = null;
 $created_token = null;
+$created_code  = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim((string) ($_POST['email'] ?? ''));
@@ -31,22 +32,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Recipient email is required.';
     } else {
         $token = random_token();
+        $code  = random_access_code();
         $stmt = db()->prepare('
-            INSERT INTO shares (document_id, token, recipient_email)
-            VALUES (:document_id, :token, :recipient_email)
+            INSERT INTO shares (document_id, token, recipient_email, access_code)
+            VALUES (:document_id, :token, :recipient_email, :access_code)
         ');
         $stmt->execute([
             ':document_id'     => $doc['id'],
             ':token'           => $token,
             ':recipient_email' => $email,
+            ':access_code'     => $code,
         ]);
         $shareId = (int) db()->lastInsertId();
 
         audit_log('create', 'share', $shareId, [
-            'document_id'    => $doc['id'],
+            'document_id'     => $doc['id'],
             'recipient_email' => $email,
         ]);
         $created_token = $token;
+        $created_code  = $code;
     }
 }
 
@@ -66,6 +70,12 @@ render_header('Share · ' . $doc['title'], $staff);
     <div class="banner banner-success">
         Share link ready:
         <code>http://<?= h($_SERVER['HTTP_HOST']) ?>/view.php?token=<?= h($created_token) ?></code>
+    </div>
+    <div class="banner banner-warn">
+        Access code: <code><?= h($created_code) ?></code><br>
+        Give this to the recipient a different way than the link itself
+        (read it aloud on a call, text it separately). The link alone won't
+        open the document — they'll need this code too.
     </div>
 <?php endif ?>
 

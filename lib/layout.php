@@ -2,7 +2,7 @@
 
 const APP_NAME = 'Argano Dispatch';
 
-function render_header(string $title, ?array $staff = null): void {
+function render_header(string $title, ?array $staff = null, string $mainClass = 'container'): void {
     ?>
 <!doctype html>
 <html lang="en">
@@ -24,7 +24,7 @@ function render_header(string $title, ?array $staff = null): void {
         <?php endif ?>
     </div>
 </nav>
-<main class="container">
+<main class="<?= h($mainClass) ?>">
     <?php
 }
 

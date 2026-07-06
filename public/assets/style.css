@@ -140,6 +140,10 @@ a:hover {
 	max-width: 520px;
 }
 
+.container-wide {
+	max-width: 960px;
+}
+
 .page-title {
 	font-size: 1.65rem;
 	font-weight: 750;
@@ -324,6 +328,7 @@ table.data th {
 	letter-spacing: 0.06em;
 	border-bottom: 1px solid var(--border);
 	background: rgba(255, 245, 237, 0.7);
+	white-space: nowrap;
 }
 
 table.data td {
@@ -345,6 +350,27 @@ table.data td.id {
 	font-variant-numeric: tabular-nums;
 	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	font-size: 0.85rem;
+	white-space: nowrap;
+}
+
+table.data td.title-cell {
+	min-width: 12rem;
+}
+
+table.data td.date-cell {
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
+
+table.data td.status-cell {
+	white-space: nowrap;
+}
+
+table.data td.row-actions {
+	white-space: nowrap;
+	text-align: right;
 }
 
 .meta {
@@ -395,4 +421,84 @@ table.data td.id {
 	color: var(--text-muted);
 	margin: 0;
 	font-size: 0.95rem;
+}
+
+.field-hint {
+	color: var(--text-muted);
+	font-size: 0.82rem;
+	margin: 0.35rem 0 0;
+}
+
+.field-hint-error {
+	color: var(--error-text);
+	font-weight: 600;
+}
+
+.form-field input.input-invalid {
+	border-color: var(--error-border);
+	background: var(--error-bg);
+	box-shadow: 0 0 0 3px rgba(242, 161, 132, 0.45);
+}
+
+.status-badge {
+	display: inline-block;
+	padding: 0.2rem 0.55rem;
+	border-radius: 999px;
+	font-size: 0.75rem;
+	font-weight: 650;
+	white-space: nowrap;
+}
+
+.status-live {
+	background: var(--success-bg);
+	color: var(--success-text);
+}
+
+.status-scheduled {
+	background: var(--warn-bg);
+	color: var(--warn-text);
+}
+
+.search-bar {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	margin-bottom: 1rem;
+}
+
+.search-input {
+	flex: 1;
+	max-width: 320px;
+	padding: 0.5rem 0.75rem;
+	font: inherit;
+	font-size: 0.9rem;
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	background: var(--surface-warm);
+}
+
+.sort-link {
+	color: var(--argano-navy);
+	text-decoration: none;
+}
+
+.sort-link:hover {
+	color: var(--accent-strong);
+}
+
+.sort-arrows {
+	display: inline-flex;
+	gap: 0.1rem;
+	margin-left: 0.15rem;
+}
+
+.sort-arrow {
+	color: var(--border-strong);
+	opacity: 0.55;
+}
+
+.sort-arrow-active {
+	color: var(--accent-strong);
+	opacity: 1;
+	font-weight: 800;
 }
